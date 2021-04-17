@@ -2,7 +2,7 @@ from re import search
 
 from setuptools import setup
 
-with open('src/sanic_jsonrpc/__init__.py') as f:
+with open('src/aiostaticmap/__init__.py') as f:
     version = str(search(r"__version__ = '(.*)'", f.read()).group(1))
 
 with open('README.md') as f:
