@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from math import sqrt, log, tan, pi, cos, ceil, floor, atan, sinh
 
-import requests
 from PIL import Image, ImageDraw
 
 
@@ -446,7 +445,7 @@ class StaticMap:
         """
         returns the status code and content (in bytes) of the requested tile url
         """
-        res = requests.get(url, **kwargs)
+        res = ....get(url, **kwargs)
         return res.status_code, res.content
 
     def _draw_features(self, image):

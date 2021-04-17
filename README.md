@@ -6,7 +6,7 @@ A small, python-based library for creating map images with lines and markers.
 ```python
 m = StaticMap(300, 400, 10)
 m.add_line(Line(((13.4, 52.5), (2.3, 48.9)), 'blue', 3))
-image = m.render()
+image = await m.render()
 image.save('map.png')
 ```
 This will create a 300px x 400px map with a blue line drawn from Berlin to Paris.
@@ -18,7 +18,7 @@ This will create a 300px x 400px map with a blue line drawn from Berlin to Paris
 StaticMap is a small library, all it takes is python and two python packages: [Pillow](https://python-pillow.github.io/) and [request](http://www.python-requests.org/). Install staticmap via:
 
 ```bash
-pip install staticmap
+pip install aiostaticmap
 ```
 
 ## Usage
@@ -80,8 +80,9 @@ simplify      | whether to simplify coordinates, looks less shaky, default is tr
 
 ## Samples
 #### Show Position on Map
+
 ```python
-from staticmap import StaticMap, CircleMarker
+from src import StaticMap, CircleMarker
 
 m = StaticMap(200, 200, url_template='http://a.tile.osm.org/{z}/{x}/{y}.png')
 
@@ -91,15 +92,16 @@ marker = CircleMarker((10, 47), '#0036FF', 12)
 m.add_marker(marker_outline)
 m.add_marker(marker)
 
-image = m.render(zoom=5)
+image = await m.render(zoom=5)
 image.save('marker.png')
 ```
 
 ![Position IconMarker on a Map](/samples/marker.png?raw=true)
 
 #### Show Ferry Connection
+
 ```python
-from staticmap import StaticMap, Line
+from src import StaticMap, Line
 
 m = StaticMap(200, 200, 80)
 
@@ -110,22 +112,23 @@ line = Line(coordinates, '#D2322D', 4)
 m.add_line(line_outline)
 m.add_line(line)
 
-image = m.render()
+image = await m.render()
 image.save('ferry.png')
 ```
 
 ![Ferry Connection Shown on a Map](/samples/ferry.png?raw=true)
 
 #### Show Icon Marker
+
 ```python
-from staticmap import StaticMap, IconMarker
+from src import StaticMap, IconMarker
 
 m = StaticMap(240, 240, 80)
 icon_flag = IconMarker((6.63204, 45.85378), './samples/icon-flag.png', 12, 32)
 icon_factory = IconMarker((6.6015, 45.8485), './samples/icon-factory.png', 18, 18)
 m.add_marker(icon_flag)
 m.add_marker(icon_factory)
-image = m.render()
+image = await m.render()
 image.save('icons.png')
 ```
 
