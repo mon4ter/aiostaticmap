@@ -1,19 +1,20 @@
-import itertools
-import time
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from math import sqrt, log, tan, pi, cos, ceil, floor, atan, sinh
+from itertools import count
+from math import atan, ceil, cos, floor, log, pi, sinh, sqrt, tan
+from time import sleep
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw
 
 
 class Line:
-    def __init__(self, coords, color, width, simplify=True):
+    def __init__(self, coords: Iterable[Tuple[float, float]], color: str, width: int, simplify: bool = True):
         """
         Line that can be drawn in a static map
 
         :param coords: an iterable of lon-lat pairs, e.g. ((0.0, 0.0), (175.0, 0.0), (175.0, -85.1))
-        :type coords: list
+        :type coords: Iterable[Tuple[float, float]]
         :param color: color suitable for PIL / Pillow
         :type color: str
         :param width: width in pixel
@@ -27,11 +28,11 @@ class Line:
         self.simplify = simplify
 
     @property
-    def extent(self):
+    def extent(self) -> Tuple[float, float, float, float]:
         """
         calculate the coordinates of the envelope / bounding box: (min_lon, min_lat, max_lon, max_lat)
 
-        :rtype: tuple
+        :rtype: Tuple[float, float, float, float]
         """
         return (
             min((c[0] for c in self.coords)),
@@ -42,10 +43,10 @@ class Line:
 
 
 class CircleMarker:
-    def __init__(self, coord, color, width):
+    def __init__(self, coord: Tuple[float, float], color: str, width: int):
         """
         :param coord: a lon-lat pair, eg (175.0, 0.0)
-        :type coord: tuple
+        :type coord: Tuple[float, float]
         :param color: color suitable for PIL / Pillow
         :type color: str
         :param width: marker width
@@ -56,15 +57,15 @@ class CircleMarker:
         self.width = width
 
     @property
-    def extent_px(self):
+    def extent_px(self) -> Tuple[int, int, int, int]:
         return (self.width,) * 4
 
 
 class IconMarker:
-    def __init__(self, coord, file_path, offset_x, offset_y):
+    def __init__(self, coord: Tuple[float, float], file_path: str, offset_x: int, offset_y: int):
         """
         :param coord:  a lon-lat pair, eg (175.0, 0.0)
-        :type coord: tuple
+        :type coord: Tuple[float, float]
         :param file_path: path to icon
         :type file_path: str
         :param offset_x: x position of the tip of the icon. relative to left bottom, in pixel
@@ -77,7 +78,7 @@ class IconMarker:
         self.offset = (offset_x, offset_y)
 
     @property
-    def extent_px(self):
+    def extent_px(self) -> Tuple[int, int, int, int]:
         w, h = self.img.size
         return (
             self.offset[0],
@@ -92,7 +93,7 @@ class Polygon:
     Polygon that can be drawn on map
 
     :param coords: an iterable of lon-lat pairs, e.g. ((0.0, 0.0), (175.0, 0.0), (175.0, -85.1))
-    :type coords: list
+    :type coords: Iterable[Tuple[float, float]]
     :param fill_color: color suitable for PIL / Pillow, can be None (transparent)
     :type fill_color: str
     :param outline_color: color suitable for PIL / Pillow, can be None (transparent)
@@ -101,14 +102,15 @@ class Polygon:
     :type simplify: bool
     """
 
-    def __init__(self, coords, fill_color, outline_color, simplify=True):
+    def __init__(self, coords: Iterable[Tuple[float, float]], fill_color: str, outline_color: str,
+                 simplify: bool = True):
         self.coords = coords
         self.fill_color = fill_color
         self.outline_color = outline_color
         self.simplify = simplify
 
     @property
-    def extent(self):
+    def extent(self) -> Tuple[float, float, float, float]:
         return (
             min((c[0] for c in self.coords)),
             min((c[1] for c in self.coords)),
@@ -117,7 +119,7 @@ class Polygon:
         )
 
 
-def _lon_to_x(lon, zoom):
+def _lon_to_x(lon: float, zoom: int) -> float:
     """
     transform longitude to tile number
     :type lon: float
@@ -130,7 +132,7 @@ def _lon_to_x(lon, zoom):
     return ((lon + 180.) / 360) * pow(2, zoom)
 
 
-def _lat_to_y(lat, zoom):
+def _lat_to_y(lat: float, zoom: int) -> float:
     """
     transform latitude to tile number
     :type lat: float
@@ -143,15 +145,15 @@ def _lat_to_y(lat, zoom):
     return (1 - log(tan(lat * pi / 180) + 1 / cos(lat * pi / 180)) / pi) / 2 * pow(2, zoom)
 
 
-def _y_to_lat(y, zoom):
+def _y_to_lat(y: float, zoom: int) -> float:
     return atan(sinh(pi * (1 - 2 * y / pow(2, zoom)))) / pi * 180
 
 
-def _x_to_lon(x, zoom):
+def _x_to_lon(x: float, zoom: int) -> float:
     return x / pow(2, zoom) * 360.0 - 180.0
 
 
-def _simplify(points, tolerance=11):
+def _simplify(points: List[Tuple[float, float]], tolerance: float = 11.0) -> Iterable[Tuple[float, float]]:
     """
     :param points: list of lon-lat pairs
     :type points: list
@@ -178,8 +180,10 @@ def _simplify(points, tolerance=11):
 
 
 class StaticMap:
-    def __init__(self, width, height, padding_x=0, padding_y=0, url_template="http://a.tile.komoot.de/komoot-2/{z}/{x}/{y}.png", tile_size=256, tile_request_timeout=None, headers=None, reverse_y=False, background_color="#fff",
-                 delay_between_retries=0):
+    def __init__(self, width: int, height: int, padding_x: int = 0, padding_y: int = 0,
+                 url_template: str = "http://a.tile.komoot.de/komoot-2/{z}/{x}/{y}.png", tile_size: int = 256,
+                 tile_request_timeout: Optional[float] = None, headers: Optional[Dict[str, str]] = None,
+                 reverse_y: bool = False, background_color: str = "#fff", delay_between_retries: int = 0):
         """
         :param width: map width in pixel
         :type width: int
@@ -226,28 +230,28 @@ class StaticMap:
 
         self.delay_between_retries = delay_between_retries
 
-    def add_line(self, line):
+    def add_line(self, line: Line):
         """
         :param line: line to draw
         :type line: Line
         """
         self.lines.append(line)
 
-    def add_marker(self, marker):
+    def add_marker(self, marker: Union[IconMarker, CircleMarker]):
         """
         :param marker: marker to draw
         :type marker: IconMarker or CircleMarker
         """
         self.markers.append(marker)
 
-    def add_polygon(self, polygon):
+    def add_polygon(self, polygon: Polygon):
         """
         :param polygon: polygon to be drawn
         :type polygon: Polygon
         """
         self.polygons.append(polygon)
 
-    def render(self, zoom=None, center=None):
+    def render(self, zoom: Optional[int] = None, center: Optional[Tuple[float, float]] = None) -> Image:
         """
         render static map with all map features that were added to map before
 
@@ -286,7 +290,7 @@ class StaticMap:
 
         return image
 
-    def determine_extent(self, zoom=None):
+    def determine_extent(self, zoom: Optional[int] = None) -> Tuple[float, float, float, float]:
         """
         calculate common extent of all current map features
 
@@ -295,7 +299,7 @@ class StaticMap:
         :return: extent (min_lon, min_lat, max_lon, max_lat)
         :rtype: tuple
         """
-        extents = [l.extent for l in self.lines]
+        extents = [line.extent for line in self.lines]
 
         for m in self.markers:
             e = (m.coord[0], m.coord[1])
@@ -326,12 +330,10 @@ class StaticMap:
             max(e[3] for e in extents)
         )
 
-    def _calculate_zoom(self):
+    def _calculate_zoom(self) -> int:
         """
         calculate the best zoom level for given extent
 
-        :param extent: extent in lon lat to render
-        :type extent: tuple
         :return: lowest zoom level for which the entire extent fits in
         :rtype: int
         """
@@ -353,7 +355,7 @@ class StaticMap:
         # map dimension is too small to fit all features
         return 0
 
-    def _x_to_px(self, x):
+    def _x_to_px(self, x: float) -> float:
         """
         transform tile number to pixel on image canvas
         :type x: float
@@ -362,7 +364,7 @@ class StaticMap:
         px = (x - self.x_center) * self.tile_size + self.width / 2
         return int(round(px))
 
-    def _y_to_px(self, y):
+    def _y_to_px(self, y: float) -> float:
         """
         transform tile number to pixel on image canvas
         :type y: float
@@ -371,7 +373,7 @@ class StaticMap:
         px = (y - self.y_center) * self.tile_size + self.height / 2
         return int(round(px))
 
-    def _draw_base_layer(self, image):
+    def _draw_base_layer(self, image: Image):
         """
         :type image: Image.Image
         """
@@ -397,14 +399,14 @@ class StaticMap:
 
         thread_pool = ThreadPoolExecutor(4)
 
-        for nb_retry in itertools.count():
+        for nb_retry in count():
             if not tiles:
                 # no tiles left
                 break
 
             if nb_retry > 0 and self.delay_between_retries:
                 # to avoid stressing the map tile server to much, wait some seconds
-                time.sleep(self.delay_between_retries)
+                sleep(self.delay_between_retries)
 
             if nb_retry >= 3:
                 # maximum number of retries exceeded
@@ -419,9 +421,10 @@ class StaticMap:
             for tile, future in zip(tiles, futures):
                 x, y, url = tile
 
+                # noinspection PyBroadException
                 try:
                     response_status_code, response_content = future.result()
-                except:
+                except Exception:
                     response_status_code, response_content = None, None
 
                 if response_status_code != 200:
@@ -441,19 +444,21 @@ class StaticMap:
             # put failed back into list of tiles to fetch in next try
             tiles = failed_tiles
 
-    def get(self, url, **kwargs):
+    @staticmethod
+    def get(url: str, **kwargs) -> Tuple[int, bytes]:
         """
         returns the status code and content (in bytes) of the requested tile url
         """
         res = ....get(url, **kwargs)
         return res.status_code, res.content
 
-    def _draw_features(self, image):
+    def _draw_features(self, image: Image):
         """
         :type image: Image.Image
         """
         # Pillow does not support anti aliasing for lines and circles
-        # There is a trick to draw them on an image that is twice the size and resize it at the end before it gets merged with  the base layer
+        # There is a trick to draw them on an image that is twice the size and resize it at the end before it gets
+        # merged with  the base layer
 
         image_lines = Image.new('RGBA', (self.width * 2, self.height * 2), (255, 0, 0, 0))
         draw = ImageDraw.Draw(image_lines)
@@ -514,11 +519,3 @@ class StaticMap:
                 self._y_to_px(_lat_to_y(icon.coord[1], self.zoom)) - icon.offset[1]
             )
             image.paste(icon.img, position, icon.img)
-
-
-if __name__ == '__main__':
-    map = StaticMap(300, 400, 10)
-    line = Line([(13.4, 52.5), (2.3, 48.9)], 'blue', 3)
-    map.add_line(line)
-    image = map.render()
-    image.save('berlin_paris.png')
