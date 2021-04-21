@@ -1,4 +1,4 @@
-from asyncio import ALL_COMPLETED, FIRST_COMPLETED, sleep, wait
+from asyncio import ALL_COMPLETED, CancelledError, FIRST_COMPLETED, sleep, wait
 from collections import deque
 from io import BytesIO
 from itertools import count
@@ -406,48 +406,52 @@ class StaticMap:
 
         # assemble all map tiles needed for the map
         tiles = deque((x, y) for x in range(x_min, x_max) for y in range(y_min, y_max))
+        pending = set()
 
-        for nb_retry in count():
-            if not tiles:
-                # no tiles left
-                break
+        try:
+            for nb_retry in count():
+                if not tiles:
+                    # no tiles left
+                    break
 
-            if nb_retry > 0 and self.delay_between_retries:
-                # to avoid stressing the map tile server to much, wait some seconds
-                logger.debug("Waiting %s seconds before %s retry", self.delay_between_retries, nb_retry)
-                await sleep(self.delay_between_retries)
+                if nb_retry > 0 and self.delay_between_retries:
+                    # to avoid stressing the map tile server to much, wait some seconds
+                    logger.debug("Waiting %s seconds before %s retry", self.delay_between_retries, nb_retry)
+                    await sleep(self.delay_between_retries)
 
-            if nb_retry >= 3:
-                # maximum number of retries exceeded
-                raise RuntimeError("could not download {} tiles: {}".format(len(tiles), tiles))
+                if nb_retry >= 3:
+                    # maximum number of retries exceeded
+                    raise RuntimeError("could not download {} tiles: {}".format(len(tiles), tiles))
 
-            failed_tiles = deque()
-            pending = set()
+                failed_tiles = deque()
 
-            async with ClientSession() as session:
-                while tiles:
-                    pending.add(self._get(session, *tiles.popleft()))
+                async with ClientSession() as session:
+                    while tiles:
+                        pending.add(self._get(session, *tiles.popleft()))
 
-                    if len(pending) >= 4 or not tiles:
-                        done, pending = await wait(pending, return_when=FIRST_COMPLETED if tiles else ALL_COMPLETED)
+                        if len(pending) >= 4 or not tiles:
+                            done, pending = await wait(pending, return_when=FIRST_COMPLETED if tiles else ALL_COMPLETED)
 
-                        for task in done:
-                            x, y, content = task.result()
+                            for task in done:
+                                x, y, content = task.result()
 
-                            if not content:
-                                failed_tiles.append((x, y))
+                                if not content:
+                                    failed_tiles.append((x, y))
 
-                            tile_image = Image.open(BytesIO(content)).convert("RGBA")
-                            box = [
-                                self._x_to_px(x),
-                                self._y_to_px(y),
-                                self._x_to_px(x + 1),
-                                self._y_to_px(y + 1),
-                            ]
-                            image.paste(tile_image, box, tile_image)
+                                tile_image = Image.open(BytesIO(content)).convert("RGBA")
+                                box = [
+                                    self._x_to_px(x),
+                                    self._y_to_px(y),
+                                    self._x_to_px(x + 1),
+                                    self._y_to_px(y + 1),
+                                ]
+                                image.paste(tile_image, box, tile_image)
 
-                # put failed back into list of tiles to fetch in next try
-                tiles = failed_tiles
+                    # put failed back into list of tiles to fetch in next try
+                    tiles = failed_tiles
+        except CancelledError:
+            for task in pending:
+                task.cancel()
 
     async def _get(self, session: ClientSession, x: float, y: float) -> Tuple[float, float, Optional[bytes]]:
         content = None
