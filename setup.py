@@ -17,11 +17,11 @@ setup(
         'Pillow >= 7.0, < 8.0',
         'aiohttp >= 3.0, < 4.0',
     ],
-    setup_requires=['pytest-runner'],
-    tests_require=[
-        'pytest',
-        'pytest-aiohttp',
-    ],
+    # setup_requires=['pytest-runner'],
+    # tests_require=[
+    #     'pytest',
+    #     'pytest-aiohttp',
+    # ],
     url='https://github.com/mon4ter/aiostaticmap',
     license='Apache License 2.0',
     author='Christoph Lingg, Dmitry Galkin',
@@ -30,7 +30,7 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     classifiers=[
-        'Development Status :: 3 - Alpha',
+        'Development Status :: 4 - Beta',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
