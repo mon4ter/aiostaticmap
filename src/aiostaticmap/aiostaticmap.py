@@ -1,11 +1,23 @@
-from concurrent.futures import ThreadPoolExecutor
+from asyncio import ALL_COMPLETED, FIRST_COMPLETED, sleep, wait
+from collections import deque
 from io import BytesIO
 from itertools import count
+from logging import getLogger
 from math import atan, ceil, cos, floor, log, pi, sinh, sqrt, tan
-from time import sleep
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw
+from aiohttp import ClientError, ClientSession
+
+__all__ = [
+    'CircleMarker',
+    'IconMarker',
+    'Line',
+    'Polygon',
+    'StaticMap'
+]
+
+logger = getLogger(__package__)
 
 
 class Line:
@@ -251,7 +263,7 @@ class StaticMap:
         """
         self.polygons.append(polygon)
 
-    def render(self, zoom: Optional[int] = None, center: Optional[Tuple[float, float]] = None) -> Image:
+    async def render(self, zoom: Optional[int] = None, center: Optional[Tuple[float, float]] = None) -> Image:
         """
         render static map with all map features that were added to map before
 
@@ -285,7 +297,7 @@ class StaticMap:
 
         image = Image.new('RGB', (self.width, self.height), self.background_color)
 
-        self._draw_base_layer(image)
+        await self._draw_base_layer(image)
         self._draw_features(image)
 
         return image
@@ -373,7 +385,17 @@ class StaticMap:
         px = (y - self.y_center) * self.tile_size + self.height / 2
         return int(round(px))
 
-    def _draw_base_layer(self, image: Image):
+    def _make_url(self, x: float, y: float) -> str:
+        max_tile = 2 ** self.zoom
+        tile_x = (x + max_tile) % max_tile
+        tile_y = (y + max_tile) % max_tile
+
+        if self.reverse_y:
+            tile_y = ((1 << self.zoom) - tile_y) - 1
+
+        return self.url_template.format(z=self.zoom, x=tile_x, y=tile_y)
+
+    async def _draw_base_layer(self, image: Image):
         """
         :type image: Image.Image
         """
@@ -383,21 +405,7 @@ class StaticMap:
         y_max = int(ceil(self.y_center + (0.5 * self.height / self.tile_size)))
 
         # assemble all map tiles needed for the map
-        tiles = []
-        for x in range(x_min, x_max):
-            for y in range(y_min, y_max):
-                # x and y may have crossed the date line
-                max_tile = 2 ** self.zoom
-                tile_x = (x + max_tile) % max_tile
-                tile_y = (y + max_tile) % max_tile
-
-                if self.reverse_y:
-                    tile_y = ((1 << self.zoom) - tile_y) - 1
-
-                url = self.url_template.format(z=self.zoom, x=tile_x, y=tile_y)
-                tiles.append((x, y, url))
-
-        thread_pool = ThreadPoolExecutor(4)
+        tiles = deque((x, y) for x in range(x_min, x_max) for y in range(y_min, y_max))
 
         for nb_retry in count():
             if not tiles:
@@ -406,51 +414,53 @@ class StaticMap:
 
             if nb_retry > 0 and self.delay_between_retries:
                 # to avoid stressing the map tile server to much, wait some seconds
-                sleep(self.delay_between_retries)
+                logger.debug("Waiting %s seconds before %s retry", self.delay_between_retries, nb_retry)
+                await sleep(self.delay_between_retries)
 
             if nb_retry >= 3:
                 # maximum number of retries exceeded
                 raise RuntimeError("could not download {} tiles: {}".format(len(tiles), tiles))
 
-            failed_tiles = []
-            futures = [
-                thread_pool.submit(self.get, tile[2], timeout=self.request_timeout, headers=self.headers)
-                for tile in tiles
-            ]
+            failed_tiles = deque()
+            pending = set()
 
-            for tile, future in zip(tiles, futures):
-                x, y, url = tile
+            async with ClientSession() as session:
+                while tiles:
+                    pending.add(self._get(session, *tiles.popleft()))
 
-                # noinspection PyBroadException
-                try:
-                    response_status_code, response_content = future.result()
-                except Exception:
-                    response_status_code, response_content = None, None
+                    if len(pending) >= 4 or not tiles:
+                        done, pending = await wait(pending, return_when=FIRST_COMPLETED if tiles else ALL_COMPLETED)
 
-                if response_status_code != 200:
-                    print("request failed [{}]: {}".format(response_status_code, url))
-                    failed_tiles.append(tile)
-                    continue
+                        for task in done:
+                            x, y, content = task.result()
 
-                tile_image = Image.open(BytesIO(response_content)).convert("RGBA")
-                box = [
-                    self._x_to_px(x),
-                    self._y_to_px(y),
-                    self._x_to_px(x + 1),
-                    self._y_to_px(y + 1),
-                ]
-                image.paste(tile_image, box, tile_image)
+                            if not content:
+                                failed_tiles.append((x, y))
 
-            # put failed back into list of tiles to fetch in next try
-            tiles = failed_tiles
+                            tile_image = Image.open(BytesIO(content)).convert("RGBA")
+                            box = [
+                                self._x_to_px(x),
+                                self._y_to_px(y),
+                                self._x_to_px(x + 1),
+                                self._y_to_px(y + 1),
+                            ]
+                            image.paste(tile_image, box, tile_image)
 
-    @staticmethod
-    def get(url: str, **kwargs) -> Tuple[int, bytes]:
-        """
-        returns the status code and content (in bytes) of the requested tile url
-        """
-        res = ....get(url, **kwargs)
-        return res.status_code, res.content
+                # put failed back into list of tiles to fetch in next try
+                tiles = failed_tiles
+
+    async def _get(self, session: ClientSession, x: float, y: float) -> Tuple[float, float, Optional[bytes]]:
+        content = None
+        url = self._make_url(x, y)
+
+        try:
+            async with session.get(url, timeout=self.request_timeout, headers=self.headers) as response:
+                response.raise_for_status()
+                content = await response.read()
+        except ClientError as err:
+            logger.debug("{} failed: {}", response.request_info, err)
+
+        return x, y, content
 
     def _draw_features(self, image: Image):
         """
